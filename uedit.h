@@ -1,5 +1,5 @@
-#ifndef TINY_READLINE_H
-#define TINY_READLINE_H
+#ifndef UEDIT_H
+#define UEDIT_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +19,8 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 static char last_cmd[MAX_LINE] = {0};
+
+#define the_line(n) ((n)<(MAX_LINE)?(n):(MAX_LINE))
 
 #ifndef _WIN32
 static struct termios orig_termios;
@@ -57,9 +59,10 @@ static void refresh_line(const char *prompt, const char *buf, int len, int cur) 
     fflush(stdout);
 }
 
-static void get_line_compact(const char *prompt, char *buf) {
+int uedit(const char *prompt, char *buf, int max_line) {
+    int r = 0;
     int len = 0, cur = 0, c;
-    memset(buf, 0, MAX_LINE);
+    memset(buf, 0, the_line(max_line));
     
     // Initial prompt print
     printf("%s", prompt);
@@ -126,15 +129,19 @@ static void get_line_compact(const char *prompt, char *buf) {
         }
 #endif
         // 5. Normal Character Insertion
-        else if (c >= 32 && c <= 126 && len < MAX_LINE - 1) {
+        else if (c >= 32 && c <= 126 && len < the_line(max_line) - 1) {
             memmove(&buf[cur + 1], &buf[cur], len - cur);
             buf[cur] = (char)c;
             len++; cur++;
+        } else if (c == 4) { // eol at least on linux
+          r = -1;
+          break;
         }
 
         refresh_line(prompt, buf, len, cur);
     }
     disable_raw_mode();
+    return r;
 }
 
 #endif
