@@ -1,5 +1,5 @@
-#ifndef UEVAL_EVAL_H
-#define UEVAL_EVAL_H
+#ifndef UEVAL_H
+#define UEVAL_H
 
 #include <stdio.h>
 #include <stdlib.h>
