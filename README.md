@@ -97,10 +97,10 @@ ueval_result res = ueval_evaluate(&env, "10 / 0");
 if (res.status == UEVAL_ERR_DIVISION_BY_ZERO) {
     printf("Math Error: Division by zero is not allowed.\n");
 }
+```
 
 ### 4. Memory Management
 **uEval** is designed with a zero-allocation policy. It does not use `malloc`, `free`, or any other heap-related functions. 
 * All state is held within the `ueval_env` struct.
 * To clear the environment, simply call `ueval_init` again.
 * No `ueval_free` is required.
-```
