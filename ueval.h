@@ -8,13 +8,15 @@
 #include <math.h>
 
 #define UEVAL_MAX_BINDS 32
+#define UEVAL_MAX_DEPTH 64
 
 typedef enum {
     UEVAL_OK = 0,
     UEVAL_ERR_SYMBOL_NOT_FOUND,
     UEVAL_ERR_EXPECTED_PAREN,
     UEVAL_ERR_INVALID_SYNTAX,
-    UEVAL_ERR_DIVISION_BY_ZERO
+    UEVAL_ERR_DIVISION_BY_ZERO,
+    UEVAL_ERR_STACK_OVERFLOW
 } ueval_status;
 
 typedef struct {
@@ -35,6 +37,7 @@ typedef struct {
     ueval_fbind funcs[UEVAL_MAX_BINDS];
     int b_count;
     int f_count;
+    int depth;          /* Current recursion depth */
     ueval_status last_err;
     char err_info[64];
 } ueval_env;
@@ -52,6 +55,12 @@ static double _ueval_get_token(ueval_env *env) {
     while (isspace(*env->ptr)) env->ptr++;
     if (*env->ptr == '\0') return 0;
 
+    /* Check Stack Depth */
+    if (env->depth > UEVAL_MAX_DEPTH) {
+        _ueval_set_err(env, UEVAL_ERR_STACK_OVERFLOW, "Recursion limit reached");
+        return 0;
+    }
+
     if (*env->ptr == '-') {
         env->ptr++;
         return -_ueval_get_token(env);
@@ -59,7 +68,9 @@ static double _ueval_get_token(ueval_env *env) {
 
     if (*env->ptr == '(') {
         env->ptr++;
+        env->depth++;
         double v = _ueval_parse_expr(env, 0);
+        env->depth--;
         while (isspace(*env->ptr)) env->ptr++;
         if (*env->ptr == ')') env->ptr++;
         else _ueval_set_err(env, UEVAL_ERR_EXPECTED_PAREN, ")");
@@ -77,16 +88,19 @@ static double _ueval_get_token(ueval_env *env) {
                 while (isspace(*env->ptr)) env->ptr++;
                 if (*env->ptr == '(') {
                     env->ptr++;
+                    env->depth++;
                     double a1 = _ueval_parse_expr(env, 0);
                     if (env->funcs[i].args == 1) {
                         while (isspace(*env->ptr)) env->ptr++;
                         if (*env->ptr == ')') env->ptr++;
+                        env->depth--;
                         return env->funcs[i].f1(a1);
                     } else {
                         if (*env->ptr == ',') env->ptr++;
                         double a2 = _ueval_parse_expr(env, 0);
                         while (isspace(*env->ptr)) env->ptr++;
                         if (*env->ptr == ')') env->ptr++;
+                        env->depth--;
                         return env->funcs[i].f2(a1, a2);
                     }
                 }
@@ -151,7 +165,7 @@ static double _ueval_parse_expr(ueval_env *env, int priority) {
     return left;
 }
 
-void ueval_init(ueval_env *env) { env->b_count = 0; env->f_count = 0; env->ptr = NULL; env->last_err = UEVAL_OK; }
+void ueval_init(ueval_env *env) { env->b_count = 0; env->f_count = 0; env->ptr = NULL; env->last_err = UEVAL_OK; env->depth = 0; }
 void ueval_bind(ueval_env *env, const char *name, double val) {
     if (env->b_count < UEVAL_MAX_BINDS) { strncpy(env->binds[env->b_count].name, name, 31); env->binds[env->b_count++].value = val; }
 }
@@ -165,6 +179,7 @@ void ueval_bind_f2(ueval_env *env, const char *name, ueval_func2 f) {
 ueval_result ueval_evaluate(ueval_env *env, const char *expr) {
     env->ptr = expr;
     env->last_err = UEVAL_OK;
+    env->depth = 0;
     memset(env->err_info, 0, 64);
     
     ueval_result res;

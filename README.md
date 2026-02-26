@@ -7,14 +7,15 @@
 * **Header-Only**: Drop `ueval.h` into your project and go.
 * **Thread-Safe**: No global state; all context is maintained in an `ueval_env` struct.
 * **C-Standard Precedence**: Logic and bitwise operators behave exactly like native C.
+* **Parentheses & Nesting**: Full support for grouping and nested function calls.
+* **Recursion Guard**: Built-in depth counter to prevent Stack Overflow.
 * **Zero Dependencies**: Uses only standard C headers (`stdio.h`, `math.h`, etc.).
-* **Flexible Binding**: Map C variables and functions (1 or 2 parameters) to the engine.
 
 ---
 
 ## 🧮 Precedence Ladder
 
-uEval follows the standard C hierarchy to ensure complex logic evaluates correctly.
+uEval follows the standard C hierarchy. Parentheses `()` always have the highest priority.
 
 | Priority | Operators | Description | Type |
 | :--- | :--- | :--- | :--- |
@@ -41,50 +42,59 @@ uEval follows the standard C hierarchy to ensure complex logic evaluates correct
 * `void ueval_bind_f1(ueval_env *env, const char *name, ueval_func1 f)`: Binds a 1-parameter C function (e.g., `sin`).
 * `void ueval_bind_f2(ueval_env *env, const char *name, ueval_func2 f)`: Binds a 2-parameter C function (e.g., `pow`).
 
-### Error Handling
-The `ueval_result` struct returns:
-* `double value`: The final result of the evaluation.
-* `ueval_status status`: `UEVAL_OK`, `UEVAL_ERR_SYMBOL_NOT_FOUND`, etc.
-* `char error_msg[64]`: The specific symbol name or operator that triggered the error.
-
 ---
 
 ## 💡 Examples
 
-### 1. Simple Math & Hex
+### 1. Function Binding (Standard & Custom)
+
+
+
 ```c
-ueval_env env;
-ueval_init(&env);
-ueval_result res = ueval_evaluate(&env, "(0xFF >> 4) + 10.5");
-// res.value = 25.5
+#include "ueval.h"
+#include <math.h>
+
+// A custom 2-parameter function
+double my_mix(double a, double b) { return (a + b) * 0.5; }
+
+int main() {
+    ueval_env env;
+    ueval_init(&env);
+
+    // Bind standard math.h functions (1-param)
+    ueval_bind_f1(&env, "sin", sin);
+    ueval_bind_f1(&env, "sqrt", sqrt);
+
+    // Bind standard math.h functions (2-param)
+    ueval_bind_f2(&env, "pow", pow);
+
+    // Bind custom function
+    ueval_bind_f2(&env, "mix", my_mix);
+
+    // Use them in an expression
+    ueval_result res = ueval_evaluate(&env, "mix(sqrt(16), pow(2, 3)) + sin(0)");
+    // sqrt(16)=4, pow(2,3)=8 -> mix(4, 8) = 6.0
+    printf("Result: %.1f\n", res.value); 
+
+    return 0;
+}
 ```
 
-### 2. Logic & Feature Flags
+### 2. Logical Nesting with Variables
 ```c
-ueval_bind(&env, "VERSION", 2.0);
-ueval_bind(&env, "ENABLED", 1.0);
+ueval_bind(&env, "VOL", 0.75);
+ueval_bind(&env, "MAX", 1.0);
 
-ueval_result res = ueval_evaluate(&env, "VERSION >= 2 && ENABLED == 1");
+// Use parentheses to group logic
+ueval_result res = ueval_evaluate(&env, "(VOL < MAX) && (VOL > 0.5)");
 // res.value = 1.0 (True)
 ```
 
-### 3. Custom Function Binding
+### 3. Handling Errors
 ```c
-double my_gain(double signal, double boost) { return signal * boost; }
+ueval_result res = ueval_evaluate(&env, "10 / 0");
 
-// ... inside main ...
-ueval_bind_f1(&env, "sqrt", sqrt);
-ueval_bind_f2(&env, "gain", my_gain);
-
-ueval_result res = ueval_evaluate(&env, "gain(sqrt(16), 1.5)");
-// res.value = 6.0
-```
-
-### 4. Handling Errors
-```c
-ueval_result res = ueval_evaluate(&env, "10 / UNDEFINED_VAR");
-
-if (res.status != UEVAL_OK) {
-    printf("Eval Error: %s (Status: %d)\n", res.error_msg, res.status);
+if (res.status == UEVAL_ERR_DIVISION_BY_ZERO) {
+    printf("Math Error: Division by zero is not allowed.\n");
 }
 ```
