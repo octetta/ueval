@@ -1,21 +1,21 @@
-# `ueval` Micro C-Expression Evaluator
+# uEval: Micro C-Expression Evaluator
 
-`ueval` is a standalone, thread-safe, header-only C library for evaluating mathematical and logical expressions. It uses a recursive-descent parser to support hexadecimal literals, bitwise operations, C-style logical operators, and custom C-function bindings.
+**uEval** is a standalone, thread-safe, header-only C library for evaluating mathematical and logical expressions. It uses a recursive-descent parser to support hexadecimal literals, bitwise operations, C-style logical operators, and custom C-function bindings.
 
-## 🚀 Key Features
+## y Features
 
 * **Header-Only**: Drop `ueval.h` into your project and go.
 * **Thread-Safe**: No global state; all context is maintained in an `ueval_env` struct.
 * **C-Standard Precedence**: Logic and bitwise operators behave exactly like native C.
+* **Ternary Operator**: Supports `cond ? true : false` for inline branching.
 * **Parentheses & Nesting**: Full support for grouping and nested function calls.
 * **Recursion Guard**: Built-in depth counter to prevent Stack Overflow.
-* **Zero Dependencies**: Uses only standard C headers (`stdio.h`, `math.h`, etc.).
 
 ---
 
-## 🧮 Precedence Ladder
+## ecedence Ladder
 
-`ueval` follows the standard C hierarchy. Parentheses `()` always have the highest priority.
+uEval follows the standard C hierarchy. Parentheses `()` always have the highest priority.
 
 | Priority | Operators | Description | Type |
 | :--- | :--- | :--- | :--- |
@@ -24,14 +24,14 @@
 | **6** | `+`, `-` | Addition, Subtraction | Math |
 | **5** | `<<`, `>>` | Bitwise Left/Right Shift | Bitwise |
 | **4** | `<`, `>`, `<=`, `>=` | Relational Comparisons | Comparison |
-| **3** | `==`, `!=` | Equality / Inequality | Comparison |
-| **3** | `&`, `^`, `\|` | Bitwise AND, XOR, OR | Bitwise |
+| **3** | `==`, `!=`, `&`, `^`, `\|` | Equality, Bitwise logic | Mixed |
 | **2** | `&&` | Logical AND | Logical |
 | **1** | `\|\|` | Logical OR | Logical |
+| **0** | `? :` | Ternary Conditional | Ternary |
 
 ---
 
-## 🛠 API Reference
+## I Reference
 
 ### Environment Lifecycle
 * `void ueval_init(ueval_env *env)`: Initializes the environment and resets error states.
@@ -44,58 +44,46 @@
 
 ---
 
-## 💡 Examples
+## amples
 
-### 1. Function Binding (Standard & Custom)
-
-
+### 1. Complex Expression (Nested Functions & Ternary)
+This example shows a volume-clamping logic using a custom `clamp` style ternary.
 
 ```c
 #include "ueval.h"
 #include <math.h>
 
-// A custom 2-parameter function
-double my_mix(double a, double b) { return (a + b) * 0.5; }
-
 int main() {
     ueval_env env;
     ueval_init(&env);
 
-    // Bind standard math.h functions (1-param)
+    ueval_bind(&env, "VOL", 1.2);
+    ueval_bind(&env, "LIMIT", 1.0);
     ueval_bind_f1(&env, "sin", sin);
-    ueval_bind_f1(&env, "sqrt", sqrt);
 
-    // Bind standard math.h functions (2-param)
-    ueval_bind_f2(&env, "pow", pow);
-
-    // Bind custom function
-    ueval_bind_f2(&env, "mix", my_mix);
-
-    // Use them in an expression
-    ueval_result res = ueval_evaluate(&env, "mix(sqrt(16), pow(2, 3)) + sin(0)");
-    // sqrt(16)=4, pow(2,3)=8 -> mix(4, 8) = 6.0
-    printf("Result: %.1f\n", res.value); 
-
+    // If VOL exceeds LIMIT, return LIMIT, else return VOL * sin(0.5)
+    const char *expr = "VOL > LIMIT ? LIMIT : VOL * sin(0.5)";
+    
+    ueval_result res = ueval_evaluate(&env, expr);
+    if (res.status == UEVAL_OK) {
+        printf("Result: %.2f\n", res.value); // Result: 1.00
+    }
     return 0;
 }
 ```
 
-### 2. Logical Nesting with Variables
+### 2. Logical Branching with Hex Literals
 ```c
-ueval_bind(&env, "VOL", 0.75);
-ueval_bind(&env, "MAX", 1.0);
-
-// Use parentheses to group logic
-ueval_result res = ueval_evaluate(&env, "(VOL < MAX) && (VOL > 0.5)");
-// res.value = 1.0 (True)
+// Check if a bit is set using bitwise AND, then return a specific hex value
+ueval_result res = ueval_evaluate(&env, "(0xFF & 0x01) ? 0xAA : 0xBB");
+// res.value = 170.0 (0xAA)
 ```
 
-### 3. Handling Errors
+### 3. Handling Errors (Missing Colon)
 ```c
-ueval_result res = ueval_evaluate(&env, "10 / 0");
-
-if (res.status == UEVAL_ERR_DIVISION_BY_ZERO) {
-    printf("Math Error: Division by zero is not allowed.\n");
+ueval_result res = ueval_evaluate(&env, "1 > 0 ? 100"); // Missing :
+if (res.status == UEVAL_ERR_EXPECTED_COLON) {
+    printf("Syntax Error: %s\n", res.error_msg); 
 }
 ```
 

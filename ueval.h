@@ -16,7 +16,8 @@ typedef enum {
     UEVAL_ERR_EXPECTED_PAREN,
     UEVAL_ERR_INVALID_SYNTAX,
     UEVAL_ERR_DIVISION_BY_ZERO,
-    UEVAL_ERR_STACK_OVERFLOW
+    UEVAL_ERR_STACK_OVERFLOW,
+    UEVAL_ERR_EXPECTED_COLON
 } ueval_status;
 
 typedef struct {
@@ -37,7 +38,7 @@ typedef struct {
     ueval_fbind funcs[UEVAL_MAX_BINDS];
     int b_count;
     int f_count;
-    int depth;          /* Current recursion depth */
+    int depth;
     ueval_status last_err;
     char err_info[64];
 } ueval_env;
@@ -55,7 +56,6 @@ static double _ueval_get_token(ueval_env *env) {
     while (isspace(*env->ptr)) env->ptr++;
     if (*env->ptr == '\0') return 0;
 
-    /* Check Stack Depth */
     if (env->depth > UEVAL_MAX_DEPTH) {
         _ueval_set_err(env, UEVAL_ERR_STACK_OVERFLOW, "Recursion limit reached");
         return 0;
@@ -128,22 +128,37 @@ static double _ueval_parse_expr(ueval_env *env, int priority) {
     while (1) {
         while (isspace(*env->ptr)) env->ptr++;
         char op = *env->ptr;
-        if (!op || op == ')' || op == '}' || op == ';' || op == ',') break;
+        if (!op || op == ')' || op == '}' || op == ';' || op == ',' || op == ':') break;
 
         int p = 0, step = 1;
-        if (op == '*' || op == '/' || op == '%') p = 7;
-        else if (op == '+' || op == '-') p = 6;
-        else if (op == '<' && env->ptr[1] == '<') { p = 5; step = 2; }
-        else if (op == '>' && env->ptr[1] == '>') { p = 5; step = 2; }
-        else if (op == '>' || op == '<') p = 4;
-        else if (op == '=' && env->ptr[1] == '=') { p = 3; step = 2; }
-        else if (op == '!' && env->ptr[1] == '=') { p = 3; step = 2; }
-        else if (op == '&' && env->ptr[1] == '&') { p = 2; step = 2; }
-        else if (op == '|' && env->ptr[1] == '|') { p = 1; step = 2; }
-        else if (op == '&' || op == '^' || op == '|') p = 3;
+        if (op == '*' || op == '/' || op == '%') p = 8;
+        else if (op == '+' || op == '-') p = 7;
+        else if (op == '<' && env->ptr[1] == '<') { p = 6; step = 2; }
+        else if (op == '>' && env->ptr[1] == '>') { p = 6; step = 2; }
+        else if (op == '>' || op == '<') p = 5;
+        else if (op == '=' && env->ptr[1] == '=') { p = 4; step = 2; }
+        else if (op == '!' && env->ptr[1] == '=') { p = 4; step = 2; }
+        else if (op == '&' && env->ptr[1] == '&') { p = 3; step = 2; }
+        else if (op == '|' && env->ptr[1] == '|') { p = 2; step = 2; }
+        else if (op == '&' || op == '^' || op == '|') p = 4;
+        else if (op == '?') p = 1;
 
         if (p <= priority) break;
         env->ptr += step;
+
+        if (op == '?') {
+            double true_val = _ueval_parse_expr(env, 0);
+            while (isspace(*env->ptr)) env->ptr++;
+            if (*env->ptr == ':') {
+                env->ptr++;
+                double false_val = _ueval_parse_expr(env, 0);
+                left = (left != 0) ? true_val : false_val;
+            } else {
+                _ueval_set_err(env, UEVAL_ERR_EXPECTED_COLON, ":");
+            }
+            continue;
+        }
+
         double right = _ueval_parse_expr(env, p);
         if (op == '+') left += right;
         else if (op == '-') left -= right;
@@ -181,7 +196,6 @@ ueval_result ueval_evaluate(ueval_env *env, const char *expr) {
     env->last_err = UEVAL_OK;
     env->depth = 0;
     memset(env->err_info, 0, 64);
-    
     ueval_result res;
     res.value = _ueval_parse_expr(env, 0);
     res.status = env->last_err;
