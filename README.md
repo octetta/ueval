@@ -1,8 +1,8 @@
 # `ueval`: Micro C-Expression Evaluator
 
-**uEval** is a standalone, thread-safe, header-only C library for evaluating mathematical and logical expressions. It uses a recursive-descent parser to support hexadecimal literals, bitwise operations, C-style logical operators, and custom C-function bindings.
+`ueval` is a standalone, thread-safe, header-only C library for evaluating mathematical and logical expressions. It uses a recursive-descent parser to support hexadecimal literals, bitwise operations, C-style logical operators, and custom C-function bindings.
 
-## y Features
+## Features
 
 * **Header-Only**: Drop `ueval.h` into your project and go.
 * **Thread-Safe**: No global state; all context is maintained in an `ueval_env` struct.
@@ -13,7 +13,7 @@
 
 ---
 
-## ecedence Ladder
+## Precedence Ladder
 
 `ueval` follows the standard C hierarchy. Parentheses `()` always have the highest priority.
 
@@ -31,7 +31,7 @@
 
 ---
 
-## I Reference
+## Reference
 
 ### Environment Lifecycle
 * `void ueval_init(ueval_env *env)`: Initializes the environment and resets error states.
@@ -44,7 +44,7 @@
 
 ---
 
-## amples
+## Examples
 
 ### 1. Complex Expression (Nested Functions & Ternary)
 This example shows a volume-clamping logic using a custom `clamp` style ternary.
