@@ -1,4 +1,4 @@
-# uEval: Micro C-Expression Evaluator
+# `ueval`: Micro C-Expression Evaluator
 
 **uEval** is a standalone, thread-safe, header-only C library for evaluating mathematical and logical expressions. It uses a recursive-descent parser to support hexadecimal literals, bitwise operations, C-style logical operators, and custom C-function bindings.
 
@@ -15,7 +15,7 @@
 
 ## ecedence Ladder
 
-uEval follows the standard C hierarchy. Parentheses `()` always have the highest priority.
+`ueval` follows the standard C hierarchy. Parentheses `()` always have the highest priority.
 
 | Priority | Operators | Description | Type |
 | :--- | :--- | :--- | :--- |
