@@ -469,6 +469,27 @@ static inline int ueval_bind(ueval_env *env, const char *name, double value) {
 }
 
 /*
+ * Look up a bound variable by name and return a pointer to its stored value.
+ *
+ * The pointer is stable for the lifetime of the env. Use it to read or
+ * update the variable directly without going through ueval_bind again:
+ *
+ *   ueval_bind(&env, "vel", 0.0);
+ *   double *vel = ueval_ptr(&env, "vel");
+ *   // later, in a MIDI callback or tight loop:
+ *   *vel = incoming_value;
+ *
+ * Returns NULL if name is not found.
+ */
+static inline double *ueval_ptr(ueval_env *env, const char *name) {
+    for (int i = 0; i < env->var_count; i++) {
+        if (strncmp(env->vars[i].name, name, 31) == 0)
+            return &env->vars[i].value;
+    }
+    return NULL;
+}
+
+/*
  * Bind a single-argument C function.
  * Calling again with the same name replaces the binding.
  * Returns 0 on success, -1 if the table is full.

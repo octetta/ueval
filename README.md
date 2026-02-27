@@ -85,6 +85,19 @@ int ueval_bind(ueval_env *env, const char *name, double value);
 ```
 Binds `name` to `value`. If `name` already exists, its value is updated. Returns `0` on success, `-1` if the variable table is full (`UEVAL_MAX_VARS`, default 32).
 
+```c
+double *ueval_ptr(ueval_env *env, const char *name);
+```
+Returns a pointer to the stored value of a bound variable, or `NULL` if not found. The pointer is stable for the lifetime of the env. Use it to read or update the variable directly on the hot path — no function call needed after the initial lookup:
+
+```c
+ueval_bind(&env, "vel", 0.0);
+double *vel = ueval_ptr(&env, "vel");
+// later, in a MIDI callback or tight loop:
+*vel = incoming_value;
+ueval_eval(&env, expr);
+```
+
 ### Binding Functions
 
 ```c
@@ -131,6 +144,22 @@ The false branch is never evaluated when the condition is true, and vice versa.
 ueval_bind(&env, "x", 0.0);
 ueval_result r = ueval_eval(&env, "x != 0 ? 1/x : -1");
 /* r.value = -1.0 — no division-by-zero error */
+```
+
+### Direct Variable Access (Hot Path)
+
+Bind once during setup, then get a stable pointer with `ueval_ptr` and update it directly — no function call overhead on the hot path.
+
+```c
+ueval_bind(&env, "vel", 0.0);
+ueval_bind(&env, "cc7", 0.0);
+double *vel = ueval_ptr(&env, "vel");
+double *cc7 = ueval_ptr(&env, "cc7");
+
+// In a real-time MIDI callback:
+*vel = msg.velocity / 127.0;
+*cc7 = msg.cc_value / 127.0;
+ueval_result r = ueval_eval(&env, expr);
 ```
 
 ### Re-binding a Variable
