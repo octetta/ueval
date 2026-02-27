@@ -1,94 +1,195 @@
 # `ueval`: Micro C-Expression Evaluator
 
-`ueval` is a standalone, thread-safe, header-only C library for evaluating mathematical and logical expressions. It uses a recursive-descent parser to support hexadecimal literals, bitwise operations, C-style logical operators, and custom C-function bindings.
+`ueval` is a standalone, thread-safe, header-only C library for evaluating mathematical and logical expressions. It uses a precedence-climbing parser to support hexadecimal literals, bitwise operations, C-style logical operators, short-circuit ternary evaluation, and custom C-function bindings.
 
 ## Features
 
 * **Header-Only**: Drop `ueval.h` into your project and go.
-* **Thread-Safe**: No global state; all context is maintained in an `ueval_env` struct.
-* **C-Standard Precedence**: Logic and bitwise operators behave exactly like native C.
-* **Ternary Operator**: Supports `cond ? true : false` for inline branching.
-* **Parentheses & Nesting**: Full support for grouping and nested function calls.
-* **Recursion Guard**: Built-in depth counter to prevent Stack Overflow.
+* **Thread-Safe**: No global state; all context is in a `ueval_env` struct.
+* **C-Standard Precedence**: Operators behave exactly like native C.
+* **Short-Circuit Ternary**: `cond ? a : b` skips the untaken branch entirely — so `x != 0 ? 1/x : 0` is safe even when `x` is zero.
+* **Re-bindable Variables**: Calling `ueval_bind` again with the same name updates the value rather than creating a duplicate.
+* **Unary Operators**: `-` (negate), `!` (logical NOT), `~` (bitwise NOT).
+* **Power Operator**: `**` (right-associative, backed by `pow()`).
+* **Recursion Guard**: Built-in depth counter prevents stack overflow.
+* **Zero Allocation**: No `malloc`, no `free`. All state lives in `ueval_env`.
 
 ---
 
-## Precedence Ladder
+## Quick Start
 
-`ueval` follows the standard C hierarchy. Parentheses `()` always have the highest priority.
+```c
+#include "ueval.h"
+#include <math.h>
+#include <stdio.h>
 
-| Priority | Operators | Description | Type |
-| :--- | :--- | :--- | :--- |
-| **8** | `-` | Unary Minus (Negation) | Unary |
-| **7** | `*`, `/`, `%` | Multiplication, Division, Modulo | Math |
-| **6** | `+`, `-` | Addition, Subtraction | Math |
-| **5** | `<<`, `>>` | Bitwise Left/Right Shift | Bitwise |
-| **4** | `<`, `>`, `<=`, `>=` | Relational Comparisons | Comparison |
-| **3** | `==`, `!=`, `&`, `^`, `\|` | Equality, Bitwise logic | Mixed |
-| **2** | `&&` | Logical AND | Logical |
-| **1** | `\|\|` | Logical OR | Logical |
-| **0** | `? :` | Ternary Conditional | Ternary |
+int main(void) {
+    ueval_env env;
+    ueval_init(&env);
+
+    ueval_bind(&env, "x", 2.0);
+    ueval_bind_f1(&env, "sqrt", sqrt);
+
+    ueval_result r = ueval_eval(&env, "sqrt(x) + x**3");
+    if (r.status == UEVAL_OK)
+        printf("%g\n", r.value); /* 9.41421 */
+    else
+        fprintf(stderr, "error: %s\n", r.error_msg);
+}
+```
 
 ---
 
-## Reference
+## Operator Precedence
 
-### Environment Lifecycle
-* `void ueval_init(ueval_env *env)`: Initializes the environment and resets error states.
-* `ueval_result ueval_evaluate(ueval_env *env, const char *expr)`: Parses and executes the expression.
+Parentheses `()` always have the highest priority. The table below lists binary/unary operators from highest to lowest precedence.
 
-### Binding C Objects
-* `void ueval_bind(ueval_env *env, const char *name, double val)`: Binds a C double to a variable name.
-* `void ueval_bind_f1(ueval_env *env, const char *name, ueval_func1 f)`: Binds a 1-parameter C function (e.g., `sin`).
-* `void ueval_bind_f2(ueval_env *env, const char *name, ueval_func2 f)`: Binds a 2-parameter C function (e.g., `pow`).
+| Prec | Operators           | Description                     | Notes              |
+| :--- | :------------------ | :------------------------------ | :----------------- |
+| 9    | `**`                | Power                           | Right-associative  |
+| 8    | `*`  `/`  `%`       | Multiply, Divide, Modulo        |                    |
+| 7    | `+`  `-`            | Add, Subtract                   |                    |
+| 6    | `<<`  `>>`          | Bitwise Shift                   |                    |
+| 5    | `<`  `>`  `<=`  `>=`| Relational Comparison           |                    |
+| 4    | `==`  `!=`          | Equality                        |                    |
+| 3    | `&`  `^`  `\|`      | Bitwise AND, XOR, OR            |                    |
+| 2    | `&&`                | Logical AND                     |                    |
+| 1    | `\|\|`              | Logical OR                      |                    |
+| 0    | `? :`               | Ternary Conditional             | Short-circuits     |
+
+Unary operators `-`, `!`, `~` are applied before any binary operator.
+
+---
+
+## API Reference
+
+### Lifecycle
+
+```c
+void ueval_init(ueval_env *env);
+```
+Initialises the environment. Call once before anything else. To reset and reuse, call again.
+
+```c
+ueval_result ueval_eval(ueval_env *env, const char *expr);
+```
+Parses and evaluates `expr`. Returns a `ueval_result` with:
+- `.value`     — the computed `double` (0 on error)
+- `.status`    — `UEVAL_OK` or an error code
+- `.error_msg` — human-readable description (empty string on success)
+
+### Binding Variables
+
+```c
+int ueval_bind(ueval_env *env, const char *name, double value);
+```
+Binds `name` to `value`. If `name` already exists, its value is updated. Returns `0` on success, `-1` if the variable table is full (`UEVAL_MAX_VARS`, default 32).
+
+### Binding Functions
+
+```c
+int ueval_bind_f1(ueval_env *env, const char *name, ueval_func1 f);
+int ueval_bind_f2(ueval_env *env, const char *name, ueval_func2 f);
+```
+Binds a 1- or 2-argument C function. Replaces an existing binding with the same name. Returns `0` on success, `-1` if the function table is full (`UEVAL_MAX_FUNCS`, default 32).
+
+### Error Codes
+
+| Code | Meaning |
+| :--- | :------ |
+| `UEVAL_OK` | Success |
+| `UEVAL_ERR_SYMBOL_NOT_FOUND` | Unbound variable or function name |
+| `UEVAL_ERR_EXPECTED_CLOSE_PAREN` | Missing `)` |
+| `UEVAL_ERR_EXPECTED_COLON` | Missing `:` in ternary |
+| `UEVAL_ERR_INVALID_ARGS` | Wrong number of arguments to a function |
+| `UEVAL_ERR_DIVISION_BY_ZERO` | Division or modulo by zero |
+| `UEVAL_ERR_STACK_OVERFLOW` | Expression exceeds `UEVAL_MAX_DEPTH` (default 64) |
+| `UEVAL_ERR_UNEXPECTED_CHAR` | Unrecognised character in input |
+
+---
+
+## Configuration
+
+Define these before including `ueval.h` to override the defaults:
+
+```c
+#define UEVAL_MAX_VARS  64   /* default: 32 */
+#define UEVAL_MAX_FUNCS 16   /* default: 32 */
+#define UEVAL_MAX_DEPTH 32   /* default: 64 */
+#include "ueval.h"
+```
 
 ---
 
 ## Examples
 
-### 1. Complex Expression (Nested Functions & Ternary)
-This example shows a volume-clamping logic using a custom `clamp` style ternary.
+### Ternary with Short-Circuit (Safe Division)
+
+The false branch is never evaluated when the condition is true, and vice versa.
 
 ```c
-#include "ueval.h"
-#include <math.h>
+ueval_bind(&env, "x", 0.0);
+ueval_result r = ueval_eval(&env, "x != 0 ? 1/x : -1");
+/* r.value = -1.0 — no division-by-zero error */
+```
 
-int main() {
-    ueval_env env;
-    ueval_init(&env);
+### Re-binding a Variable
 
-    ueval_bind(&env, "VOL", 1.2);
-    ueval_bind(&env, "LIMIT", 1.0);
-    ueval_bind_f1(&env, "sin", sin);
-
-    // If VOL exceeds LIMIT, return LIMIT, else return VOL * sin(0.5)
-    const char *expr = "VOL > LIMIT ? LIMIT : VOL * sin(0.5)";
-    
-    ueval_result res = ueval_evaluate(&env, expr);
-    if (res.status == UEVAL_OK) {
-        printf("Result: %.2f\n", res.value); // Result: 1.00
-    }
-    return 0;
+```c
+ueval_bind(&env, "t", 0.0);
+for (int i = 0; i < 10; i++) {
+    ueval_bind(&env, "t", (double)i);   /* updates in place */
+    ueval_result r = ueval_eval(&env, "t * t + 2*t + 1");
+    printf("%g\n", r.value);
 }
 ```
 
-### 2. Logical Branching with Hex Literals
+### Bitwise / Hex Literals
+
 ```c
-// Check if a bit is set using bitwise AND, then return a specific hex value
-ueval_result res = ueval_evaluate(&env, "(0xFF & 0x01) ? 0xAA : 0xBB");
-// res.value = 170.0 (0xAA)
+/* Check if bit 0 is set, return 0xAA or 0xBB accordingly */
+ueval_result r = ueval_eval(&env, "(0xFF & 0x01) ? 0xAA : 0xBB");
+/* r.value = 170.0 (0xAA) */
 ```
 
-### 3. Handling Errors (Missing Colon)
+### Unary Operators
+
 ```c
-ueval_result res = ueval_evaluate(&env, "1 > 0 ? 100"); // Missing :
-if (res.status == UEVAL_ERR_EXPECTED_COLON) {
-    printf("Syntax Error: %s\n", res.error_msg); 
-}
+ueval_bind(&env, "flag", 0.0);
+ueval_eval(&env, "!flag");   /* 1.0 — logical NOT  */
+ueval_eval(&env, "~0xF0");   /* bitwise NOT        */
+ueval_eval(&env, "-(2+3)");  /* -5.0               */
 ```
 
-### 4. Memory Management
-`ueval` is designed with a zero-allocation policy. It does not use `malloc`, `free`, or any other heap-related functions. 
-* All state is held within the `ueval_env` struct.
-* To clear the environment, simply call `ueval_init` again.
-* No `ueval_free` is required.
+### Power Operator
+
+```c
+ueval_eval(&env, "2**10");       /* 1024.0 */
+ueval_eval(&env, "2**2**3");     /* 256.0  — right-associative: 2**(2**3) */
+```
+
+### Handling Errors
+
+```c
+ueval_result r = ueval_eval(&env, "1 / 0");
+if (r.status != UEVAL_OK)
+    fprintf(stderr, "error: %s\n", r.error_msg);
+/* error: division by zero: '/' */
+```
+
+### Custom Two-Argument Function
+
+```c
+double clamp(double v, double hi) { return v > hi ? hi : v; }
+
+ueval_bind_f2(&env, "clamp", clamp);
+ueval_bind(&env, "VOL", 1.2);
+ueval_result r = ueval_eval(&env, "clamp(VOL, 1.0)");
+/* r.value = 1.0 */
+```
+
+---
+
+## Memory & Thread Safety
+
+`ueval` uses no dynamic allocation. Every `ueval_env` is fully self-contained, so multiple environments can exist simultaneously in different threads without any locking. Do not share a single `ueval_env` between threads without external synchronisation.
