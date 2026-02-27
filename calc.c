@@ -76,15 +76,16 @@ int main() {
           char *right;
           int r = split_and_trim(&line[1], &left, &right);
           if (r == 0) {
-            double val = strtod(right, NULL);
-            ueval_bind(&env, left, val);
+            ueval_result res = ueval_evaluate(&env, right);
+            if (res.status == UEVAL_OK) ueval_bind(&env, left, res.value);
+            else printf("# err %d\n", res.status);
           }
-          //printf("%d = %s %s\n", r, left, right);
         }
 
-        if (strlen(line) > 0) {
+        if (r > 0) {
             ueval_result res = ueval_evaluate(&env, line);
-            printf("= %g\n", res.value);
+            if (res.status == UEVAL_OK) printf("= %g\n", res.value);
+            else printf("# err %d\n", res.status);
         }
 
         // Optional: clear buffer for next iteration

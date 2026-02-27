@@ -15,133 +15,176 @@
     #define GETCH() getchar()
 #endif
 
-#define MAX_LINE 1024
+#define UEDIT_MAX_LINE 1024
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-static char last_cmd[MAX_LINE] = {0};
-
-#define the_line(n) ((n)<(MAX_LINE)?(n):(MAX_LINE))
+/* Single-entry history; one slot per uedit() call site is typical usage */
+static char uedit_last_cmd[UEDIT_MAX_LINE] = {0};
 
 #ifndef _WIN32
-static struct termios orig_termios;
-static void disable_raw_mode() { tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios); }
-static void enable_raw_mode() {
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    atexit(disable_raw_mode);
-    struct termios raw = orig_termios;
+static struct termios uedit_orig_termios;
+
+static void uedit_disable_raw_mode(void) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &uedit_orig_termios);
+}
+
+static void uedit_enable_raw_mode(void) {
+    tcgetattr(STDIN_FILENO, &uedit_orig_termios);
+    atexit(uedit_disable_raw_mode);
+    struct termios raw = uedit_orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON);
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 #else
-static DWORD orig_mode;
-static void enable_raw_mode() {
-    HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
-    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    GetConsoleMode(hIn, &orig_mode);
-    SetConsoleMode(hIn, orig_mode & ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT));
-    DWORD outMode = 0;
-    GetConsoleMode(hOut, &outMode);
-    SetConsoleMode(hOut, outMode | 0x0004); // ENABLE_VIRTUAL_TERMINAL_PROCESSING
+static DWORD uedit_orig_in_mode;
+static DWORD uedit_orig_out_mode;
+
+static void uedit_disable_raw_mode(void) {
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE),  uedit_orig_in_mode);
+    SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), uedit_orig_out_mode);
 }
-static void disable_raw_mode() { SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), orig_mode); }
+
+static void uedit_enable_raw_mode(void) {
+    HANDLE hIn  = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    GetConsoleMode(hIn,  &uedit_orig_in_mode);
+    GetConsoleMode(hOut, &uedit_orig_out_mode);
+    SetConsoleMode(hIn, uedit_orig_in_mode & ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT));
+    /* Enable ANSI escape processing on the output side */
+    SetConsoleMode(hOut, uedit_orig_out_mode | 0x0004 /* ENABLE_VIRTUAL_TERMINAL_PROCESSING */);
+}
 #endif
 
-static void refresh_line(const char *prompt, const char *buf, int len, int cur) {
-    int p_len = (int)strlen(prompt);
-    // \r moves to start, \033[K clears from cursor to end of line
-    printf("\r\033[K%s%s", prompt, buf);
-    
-    // Move cursor back to the logical 'cur' position from the start of the line
-    printf("\r");
-    for (int i = 0; i < (cur + p_len); i++) {
-        printf("\033[C");
-    }
+/* Redraw the current line in place.
+   Uses a single cursor-forward escape instead of one per column. */
+static void uedit_refresh_line(const char *prompt, const char *buf, int cur) {
+    int col = (int)strlen(prompt) + cur;
+    /* \r    – go to column 0
+       \033[K – erase to end of line
+       then reprint prompt + buffer
+       then home again and jump forward to cursor position */
+    printf("\r\033[K%s%s\r", prompt, buf);
+    if (col > 0)
+        printf("\033[%dC", col);
     fflush(stdout);
 }
 
-int uedit(const char *prompt, char *buf, int max_line) {
+/* Interactive line editor.
+ *
+ * prompt   – displayed before the input area (not included in buf)
+ * buf      – caller-supplied buffer that receives the edited line
+ * max_line – size of buf in bytes; at most max_line-1 characters are stored
+ *
+ * Returns  the number of characters in buf on Enter (>= 0)
+ *         -1 on Ctrl-D / EOF
+ *
+ * History: the last non-empty line entered is recalled with Up-arrow.
+ * The history slot is shared across all calls (file-scope static).
+ */
+static int uedit(const char *prompt, char *buf, int max_line) {
     int r = 0;
     int len = 0, cur = 0, c;
-    memset(buf, 0, the_line(max_line));
-    
-    // Initial prompt print
+
+    if (max_line <= 0) return -1;
+
+    memset(buf, 0, max_line);
     printf("%s", prompt);
     fflush(stdout);
-    
-    enable_raw_mode();
+
+    uedit_enable_raw_mode();
 
     while (1) {
         c = GETCH();
 
-        // 1. Navigation & Basic Control
-        if (c == CTRL_KEY('a')) { cur = 0; } 
-        else if (c == CTRL_KEY('e')) { cur = len; }
-        else if (c == '\n' || c == '\r') {
+        /* --- Navigation -------------------------------------------------- */
+        if (c == CTRL_KEY('a')) {
+            cur = 0;
+        } else if (c == CTRL_KEY('e')) {
+            cur = len;
+
+        /* --- Commit ------------------------------------------------------- */
+        } else if (c == '\n' || c == '\r') {
             buf[len] = '\0';
             putchar('\n');
-            if (len > 0) strcpy(last_cmd, buf);
+            if (len > 0)
+                strncpy(uedit_last_cmd, buf, UEDIT_MAX_LINE - 1);
+            r = len;
             break;
-        }
-        // 2. Backspace
-        else if (c == 127 || c == 8) {
+
+        /* --- Backspace ---------------------------------------------------- */
+        } else if (c == 127 || c == 8) {
             if (cur > 0) {
                 memmove(&buf[cur - 1], &buf[cur], len - cur);
                 len--; cur--;
                 buf[len] = '\0';
             }
-        }
-        // 3. Escape Sequences (Unix/ANSI)
-        else if (c == 27) {
+
+        /* --- ANSI / VT escape sequences ----------------------------------- */
+        } else if (c == 27) {
             c = GETCH();
             if (c == '[') {
                 c = GETCH();
-                if (c == 'D' && cur > 0) { cur--; }
-                else if (c == 'C' && cur < len) { cur++; }
-                else if (c == 'A' && last_cmd[0]) {
-                    strcpy(buf, last_cmd);
+                if      (c == 'D' && cur > 0)   { cur--; }
+                else if (c == 'C' && cur < len)  { cur++; }
+                else if (c == 'H')               { cur = 0; }   /* Home */
+                else if (c == 'F')               { cur = len; } /* End  */
+                else if (c == 'A' && uedit_last_cmd[0]) {
+                    strncpy(buf, uedit_last_cmd, max_line - 1);
+                    buf[max_line - 1] = '\0';
                     len = (int)strlen(buf); cur = len;
-                }
-                else if (c == '3') { // Delete key
-                    GETCH(); // consume '~'
+                } else if (c == '3') {          /* Delete key: ESC [ 3 ~ */
+                    int tilde = GETCH();
+                    (void)tilde; /* consume '~' */
                     if (cur < len) {
                         memmove(&buf[cur], &buf[cur + 1], len - cur - 1);
                         len--; buf[len] = '\0';
                     }
                 }
             }
-        }
+
 #ifdef _WIN32
-        // 4. Windows Extended Keys
-        else if (c == 0 || c == 0xE0) {
+        /* --- Windows extended key codes ----------------------------------- */
+        } else if (c == 0 || c == 0xE0) {
             c = GETCH();
-            if (c == 75 && cur > 0) { cur--; }      // Left
-            else if (c == 77 && cur < len) { cur++; } // Right
-            else if (c == 71) { cur = 0; }           // Home
-            else if (c == 79) { cur = len; }         // End
-            else if (c == 83 && cur < len) {        // Delete
+            if      (c == 75 && cur > 0)   { cur--; }       /* Left  */
+            else if (c == 77 && cur < len) { cur++; }       /* Right */
+            else if (c == 71)              { cur = 0; }     /* Home  */
+            else if (c == 79)              { cur = len; }   /* End   */
+            else if (c == 83 && cur < len) {                /* Delete */
                 memmove(&buf[cur], &buf[cur + 1], len - cur - 1);
                 len--; buf[len] = '\0';
-            }
-            else if (c == 72 && last_cmd[0]) {      // Up
-                strcpy(buf, last_cmd);
+            } else if (c == 72 && uedit_last_cmd[0]) {     /* Up / history */
+                strncpy(buf, uedit_last_cmd, max_line - 1);
+                buf[max_line - 1] = '\0';
                 len = (int)strlen(buf); cur = len;
             }
-        }
 #endif
-        // 5. Normal Character Insertion
-        else if (c >= 32 && c <= 126 && len < the_line(max_line) - 1) {
+
+        /* --- Ctrl-D: delete forward if text present, else EOF ------------ */
+        } else if (c == CTRL_KEY('d')) {
+            if (len > 0) {
+                /* behave like the Delete key */
+                if (cur < len) {
+                    memmove(&buf[cur], &buf[cur + 1], len - cur - 1);
+                    len--; buf[len] = '\0';
+                }
+            } else {
+                r = -1;
+                break;
+            }
+
+        /* --- Printable character insertion -------------------------------- */
+        } else if (c >= 32 && c <= 126 && len < max_line - 1) {
             memmove(&buf[cur + 1], &buf[cur], len - cur);
             buf[cur] = (char)c;
             len++; cur++;
-        } else if (c == 4) { // eol at least on linux
-          r = -1;
-          break;
         }
 
-        refresh_line(prompt, buf, len, cur);
+        uedit_refresh_line(prompt, buf, cur);
     }
-    disable_raw_mode();
+
+    uedit_disable_raw_mode();
     return r;
 }
 
-#endif
+#endif /* UEDIT_H */
