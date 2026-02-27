@@ -96,8 +96,6 @@ int main(void) {
             if (res.status == UEVAL_OK) {
                 if (ueval_bind(&env, name, res.value) != 0)
                     fprintf(stderr, "# variable table full\n");
-                else
-                    printf("# %s = %g\n", name, res.value);
             } else {
                 print_err(name, res);
             }

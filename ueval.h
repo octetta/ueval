@@ -9,6 +9,10 @@
  *   ueval_result r = ueval_eval(&env, "sin(x) * 2");
  *   if (r.status == UEVAL_OK) printf("%f\n", r.value);
  *
+ * DOLLAR-VARIABLE MODE (optional):
+ *   env.dollar_vars = 1;
+ *   ueval_result r = ueval_eval(&env, "sin($x) * 2");
+ *
  * SUPPORTED SYNTAX:
  *   Literals:      3.14, 0xFF, 1e10
  *   Arithmetic:    + - * / %
@@ -18,7 +22,13 @@
  *   Ternary:       cond ? a : b   (short-circuit: only one branch evaluated)
  *   Grouping:      (expr)
  *   Functions:     f(x) or f(x, y)
- *   Variables:     any bound name
+ *   Variables:     any bound name, or $name in dollar-variable mode
+ *
+ * DOLLAR-VARIABLE MODE:
+ *   env.dollar_vars = 1;   // enable: variables must be written as $name
+ *   env.dollar_vars = 0;   // disable (default): bare names as usual
+ *   In this mode bare identifiers are rejected; only $name is recognised.
+ *   Functions are still called without a $ prefix (sin(x) not $sin(x)).
  */
 
 #ifndef UEVAL_H
@@ -77,7 +87,7 @@ typedef struct {
 } ueval__func;
 
 typedef struct {
-    const char   *src;    /* current parse position */
+    const char   *src;         /* current parse position */
     ueval__var    vars[UEVAL_MAX_VARS];
     ueval__func   funcs[UEVAL_MAX_FUNCS];
     int           var_count;
@@ -85,6 +95,7 @@ typedef struct {
     int           depth;
     ueval_status  err;
     char          err_detail[48];
+    int           dollar_vars; /* if non-zero, variables must be prefixed with $ */
 } ueval_env;
 
 /* ---------- forward declarations (internal) ------------------------------ */
@@ -173,7 +184,32 @@ static double ueval__primary(ueval_env *env) {
             ueval__err(env, UEVAL_ERR_EXPECTED_CLOSE_PAREN, "");
         }
 
-    /* identifier: variable or function call */
+    /* dollar-variable: $name — only a variable, never a function call */
+    } else if (*env->src == '$') {
+        env->src++; /* consume $ */
+        if (!isalpha((unsigned char)*env->src) && *env->src != '_') {
+            ueval__err(env, UEVAL_ERR_UNEXPECTED_CHAR, "$");
+        } else {
+            const char *start = env->src;
+            while (isalnum((unsigned char)*env->src) || *env->src == '_') env->src++;
+            int len = (int)(env->src - start);
+            char name[32];
+            strncpy(name, start, len < 31 ? len : 31);
+            name[len < 31 ? len : 31] = '\0';
+
+            int found = 0;
+            for (int i = 0; i < env->var_count; i++) {
+                if (strcmp(name, env->vars[i].name) == 0) {
+                    val = env->vars[i].value;
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) ueval__err(env, UEVAL_ERR_SYMBOL_NOT_FOUND, name);
+        }
+
+    /* identifier: variable or function call.
+     * In dollar_vars mode, bare identifiers are only accepted as function names. */
     } else if (isalpha((unsigned char)*env->src) || *env->src == '_') {
         const char *start = env->src;
         while (isalnum((unsigned char)*env->src) || *env->src == '_') env->src++;
@@ -185,7 +221,7 @@ static double ueval__primary(ueval_env *env) {
         ueval__skip(env);
 
         if (*env->src == '(') {
-            /* function call */
+            /* function call — always allowed regardless of dollar_vars */
             env->src++;
             env->depth++;
 
@@ -217,8 +253,13 @@ static double ueval__primary(ueval_env *env) {
                 env->depth--;
                 val = env->funcs[fi].f2(a1, a2);
             }
+        } else if (env->dollar_vars) {
+            /* bare name where a variable was expected — tell the user */
+            char hint[36];
+            snprintf(hint, sizeof(hint), "$%s", name);
+            ueval__err(env, UEVAL_ERR_SYMBOL_NOT_FOUND, hint);
         } else {
-            /* variable lookup */
+            /* normal variable lookup */
             int found = 0;
             for (int i = 0; i < env->var_count; i++) {
                 if (strcmp(name, env->vars[i].name) == 0) {
@@ -400,6 +441,8 @@ static double ueval__expr(ueval_env *env, int min_prec) {
 
 /*
  * Initialise an env. Call this once before anything else.
+ * All fields are zeroed, including dollar_vars (disabled by default).
+ * Set env.dollar_vars = 1 after init to require $name syntax for variables.
  */
 static inline void ueval_init(ueval_env *env) {
     memset(env, 0, sizeof(*env));

@@ -12,7 +12,7 @@
 * **Unary Operators**: `-` (negate), `!` (logical NOT), `~` (bitwise NOT).
 * **Power Operator**: `**` (right-associative, backed by `pow()`).
 * **Recursion Guard**: Built-in depth counter prevents stack overflow.
-* **Zero Allocation**: No `malloc`, no `free`. All state lives in `ueval_env`.
+* **Dollar-Variable Mode**: Opt-in `$name` syntax for variables — useful when bare identifiers conflict with surrounding systems.
 
 ---
 
@@ -176,6 +176,34 @@ if (r.status != UEVAL_OK)
     fprintf(stderr, "error: %s\n", r.error_msg);
 /* error: division by zero: '/' */
 ```
+
+### Dollar-Variable Mode
+
+Set `env.dollar_vars = 1` to require variables to be written as `$name`. Functions are unaffected and are still called without a prefix.
+
+```c
+ueval_env env;
+ueval_init(&env);
+env.dollar_vars = 1;
+
+ueval_bind(&env, "x", 10.0);
+ueval_bind(&env, "y", 3.0);
+ueval_bind_f1(&env, "sqrt", sqrt);
+
+ueval_result r = ueval_eval(&env, "$x * $y + sqrt($x)");
+/* r.value = 33.162 */
+```
+
+In this mode, a bare identifier that isn't a function call is an error:
+
+```c
+ueval_result r = ueval_eval(&env, "x * 2"); /* forgot the $ */
+/* r.status = UEVAL_ERR_SYMBOL_NOT_FOUND, r.error_msg = "symbol not found: '$x'" */
+```
+
+The error message includes the `$` hint so the cause is immediately obvious.
+
+---
 
 ### Custom Two-Argument Function
 
