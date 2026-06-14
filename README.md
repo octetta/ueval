@@ -1,5 +1,7 @@
 # `ueval`: Micro C-Expression Evaluator
 
+[![CodeFactor](https://www.codefactor.io/repository/github/octetta/ueval/badge)](https://www.codefactor.io/repository/github/octetta/ueval)
+
 `ueval` is a standalone, thread-safe, header-only C library for evaluating mathematical and logical expressions. It uses a precedence-climbing parser to support hexadecimal literals, bitwise operations, C-style logical operators, short-circuit ternary evaluation, and custom C-function bindings.
 
 ## Features
