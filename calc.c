@@ -48,6 +48,27 @@ static void print_err(const char *context, ueval_result res) {
     else fprintf(stderr, "# %s: error %d\n", context, res.status);
 }
 
+/*
+ * Detect a single, isolated '=' in a line that does NOT start with '\' —
+ * i.e. someone almost certainly forgot the '\' prefix for assignment and
+ * typed "x = 5" instead of "\x = 5". Returns 1 if such an '=' is found,
+ * 0 otherwise.
+ *
+ * Deliberately conservative: only fires when there is EXACTLY one '=' in
+ * the whole line and it is not adjacent to another '=', '!', '<', or '>'
+ * (which would make it part of ==, !=, <=, or >=). This avoids false
+ * positives on legitimate comparison expressions like "x == 5" or
+ * "a <= b" while still catching the most common typo.
+ */
+static int looks_like_forgotten_backslash(const char *line) {
+    const char *eq = strchr(line, '=');
+    if (!eq) return 0;
+    if (strchr(eq + 1, '=')) return 0;          /* more than one '=' -> not this case */
+    if (eq != line && (eq[-1] == '=' || eq[-1] == '!' || eq[-1] == '<' || eq[-1] == '>'))
+        return 0;                                /* part of ==, !=, <=, >= */
+    return 1;
+}
+
 int main(void) {
     ueval_env env;
     ueval_init(&env);
@@ -67,6 +88,9 @@ int main(void) {
     ueval_bind_f2(&env, "fmod", fmod);
     ueval_bind(&env, "pi", 3.14159265358979323846);
     ueval_bind(&env, "e",  2.71828182845904523536);
+
+    printf("ueval calc %s -- type an expression, \\name = expr to assign, q to quit\n",
+           UEVAL_VERSION);
 
     char line[1024];
 
@@ -96,10 +120,26 @@ int main(void) {
             if (res.status == UEVAL_OK) {
                 if (ueval_bind(&env, name, res.value) != 0)
                     fprintf(stderr, "# variable table full\n");
+                else
+                    printf("%s = %g\n", name, res.value);
             } else {
                 print_err(name, res);
             }
             continue; /* don't fall through to expression evaluator */
+        }
+
+        /*
+         * Likely typo: "x = 5" without the leading '\' for assignment.
+         * ueval's expression grammar has no '=' operator, so this would
+         * otherwise silently parse just the "x" part, evaluate to x's
+         * current value, and drop " = 5" as unreported trailing garbage
+         * (see README "Known Quirks") -- giving no sign anything went
+         * wrong. Warn instead of evaluating in that case.
+         */
+        if (looks_like_forgotten_backslash(line)) {
+            fprintf(stderr, "# did you mean: \\%s ?  (assignment needs a leading '\\')\n", line);
+            memset(line, 0, sizeof(line));
+            continue;
         }
 
         /*

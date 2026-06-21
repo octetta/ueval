@@ -34,6 +34,38 @@
 #ifndef UEVAL_H
 #define UEVAL_H
 
+/* ---------------------------------------------------------------------------
+ * Version
+ *
+ * Semantic versioning (https://semver.org), adapted for a single-header C
+ * expression-evaluator library where "API" means both function signatures
+ * AND expression-language behavior:
+ *
+ *   MAJOR - a previously-successful expression now evaluates to a different
+ *           result or now errors, OR an existing function's signature
+ *           changes. (Example: if the "extra function arguments are
+ *           silently accepted" quirk documented in the README is ever
+ *           tightened into an error, that's a MAJOR bump even though no
+ *           C signature changes - a previously-accepted expression now
+ *           fails, which can break saved presets/patches.)
+ *   MINOR - new, additive capability with no change to existing behavior:
+ *           new bound-function helpers, new error codes, new config
+ *           macros, etc. Old code keeps compiling and behaving the same.
+ *   PATCH - bug fixes that make behavior match documented/intended
+ *           semantics, with no signature changes. (Example: the <=/>=
+ *           shift-collision fix - "<=" was always documented/intended to
+ *           mean "less than or equal", so making it actually do that is
+ *           a patch, not a behavior change someone could be relying on.)
+ *
+ * 0.x means "anything may still change" per semver - this library is still
+ * in that phase. See README "Versioning" and CHANGELOG.md for details and
+ * history.
+ * ------------------------------------------------------------------------ */
+#define UEVAL_VERSION_MAJOR 0
+#define UEVAL_VERSION_MINOR 1
+#define UEVAL_VERSION_PATCH 0
+#define UEVAL_VERSION "0.1.0"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

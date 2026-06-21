@@ -4,7 +4,7 @@ BENCH = bench_ueval
 
 all: $(EXE)
 
-calc: calc.c ueval.h
+calc: calc.c ueval.h uedit.h
 	gcc calc.c -o calc -lm
 
 test: $(TEST)

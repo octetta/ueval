@@ -1,8 +1,13 @@
 # `ueval`: Micro C-Expression Evaluator
 
 [![CodeFactor](https://www.codefactor.io/repository/github/octetta/ueval/badge)](https://www.codefactor.io/repository/github/octetta/ueval)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](CHANGELOG.md)
 
 `ueval` is a standalone, thread-safe, header-only C library for evaluating mathematical and logical expressions. It uses a precedence-climbing parser to support hexadecimal literals, bitwise operations, C-style logical operators, short-circuit ternary evaluation, and custom C-function bindings.
+
+A small interactive REPL built on top of it, [`calc`](#calc-interactive-repl), is included for trying things out from the command line.
+
+Current version: **0.1.0** ([changelog](CHANGELOG.md) · [versioning policy](#versioning)) — see `UEVAL_VERSION` in `ueval.h` for the compile-time source of truth.
 
 ## Features
 
@@ -327,6 +332,90 @@ ueval_result r = ueval_eval(&env, "clamp(VOL, 1.0)");
 
 ---
 
+## `calc`: Interactive REPL
+
+`calc.c` is a small companion REPL built on top of `ueval.h` and `uedit.h` (a terminal line editor included in this repo). It's both a usable interactive calculator and a worked example of wiring `ueval` into an application.
+
+```sh
+make calc
+./calc
+```
+
+On startup it prints a one-line reminder of how to use it, including the live library version:
+
+```
+ueval calc 0.1.0 -- type an expression, \name = expr to assign, q to quit
+```
+
+### What it can do
+
+- **Evaluate any expression `ueval` supports** — see [Operator Precedence](#operator-precedence) and [Comparison Operators](#comparison-operators) for the full grammar:
+
+  ```
+  # 2 + 3 * 4
+  = 14
+  # sin(pi / 2)
+  = 1
+  # 5 <= 5
+  = 1
+  ```
+
+- **Built-in math functions and constants are pre-bound**, so they're available immediately without any setup: `sin`, `cos`, `tan`, `sqrt`, `log`, `log2`, `abs`, `exp`, `ceil`, `floor` (all 1-argument), `pow`, `fmod` (both 2-argument), plus the constants `pi` and `e`.
+
+- **Assign a variable with `\name = expr`** — evaluates the right-hand side and binds the result under `name` for later expressions. A successful assignment echoes back what was bound:
+
+  ```
+  # \x = 3.14
+  x = 3.14
+  # x * 2
+  = 6.28
+  # \y = x + 1
+  y = 4.14
+  ```
+
+  Re-running an assignment for the same name updates it in place (`ueval_bind`'s normal behavior — see [API Reference](#api-reference)), and the right-hand side can reference the variable's own current value:
+
+  ```
+  # \x = x + 10
+  x = 13.14
+  ```
+
+- **The `\` prefix is required for assignment, and a forgotten `\` is caught and reported.** `ueval`'s expression grammar has no `=` operator — only `==`, `!=`, `<=`, `>=` — so typing `x = 5` instead of `\x = 5` doesn't mean what it looks like it means: by itself, `ueval_eval` would parse just the `x` part, return its current value, and silently drop ` = 5` as unreported trailing garbage (see [Known Quirks](#known-quirks)). `calc` checks for this specific shape of typo — a single, isolated `=` on a line that doesn't start with `\` — and reports it instead of evaluating it as if nothing were wrong:
+
+  ```
+  # x = 5
+  # did you mean: \x = 5 ?  (assignment needs a leading '\')
+  ```
+
+  This check is conservative: it only fires on a lone `=`, so legitimate comparisons like `x == 5`, `x != 5`, `x <= 5`, and `x >= 5` are left alone and evaluated normally.
+
+- **`exit` or `q` quits.**
+
+### Variables and functions are separate namespaces
+
+`ueval` keeps bound variables and bound functions in two separate tables internally (see [API Reference](#api-reference)), and `calc` inherits that directly: you can bind a variable with the same name as one of the pre-bound math functions without breaking the function, because `name` (bare) and `name(...)` (call syntax) look up different tables.
+
+```
+# \sqrt = 9
+sqrt = 9
+# sqrt(16)
+= 4
+# sqrt
+= 9
+```
+
+`sqrt(16)` still calls the real `sqrt` function; bare `sqrt` now reads the variable. This is occasionally useful (e.g. naming a control-rate value the same as a related function) but is also a sharp edge worth knowing about before you hit it by accident.
+
+### What it deliberately doesn't do
+
+- **No way to unbind a variable or list what's currently bound.** Everything lives for the life of the process; restart `calc` to clear state.
+- **No persistence between runs.** Bindings aren't saved to a file and reloaded.
+- **No multi-line input or scripting.** Each line is one expression or one assignment.
+
+None of this is a limitation of `ueval` itself — `calc` is intentionally a minimal example, not a full-featured calculator application. If you need any of the above, they're straightforward to add on top of the existing `ueval_bind`/`ueval_ptr`/`ueval_eval` API.
+
+---
+
 ## Known Quirks
 
 These behaviors were verified directly against the current `ueval.h` source while building out the test suite. None of them crash or corrupt state — they're silent semantic surprises, which is exactly why they're worth documenting and pinning down with tests.
@@ -370,6 +459,16 @@ There's no dedicated "empty expression" error code — an empty string is treate
 
 A standalone test suite (`test_ueval.c`) exercises literals, every operator and its precedence, both ternary branches' short-circuit behavior, variable rebinding, `ueval_ptr`, function binding/arity, dollar-variable mode, every error code, the recursion guard, and all of the quirks above — each quirk is asserted against its *actual* current behavior so a regression (or an upstream fix that changes behavior) shows up immediately as a failing test rather than silently.
 
+Output is grouped into named sections, and every individual assertion prints a labeled `PASS`/`FAIL` line describing exactly what it checked and what it got — nothing passes silently. Each section prints its own subtotal, and a grand total closes the run:
+
+```
+== Logical and comparison operators ==
+  PASS  <= equal case              "5 <= 5" -> 1
+  PASS  <= false case              "5 <= 4" -> 0
+  ...
+   (28 passed, 0 failed)
+```
+
 ```sh
 make test
 ```
@@ -381,9 +480,15 @@ gcc -Wall -Wextra test_ueval.c -o test_ueval -lm
 ./test_ueval
 ```
 
+Pass `-q` (or `--quiet`) to suppress individual `PASS` lines and show only section headers, subtotals, and any failures — useful for CI logs where you mainly want to know if something broke:
+
+```sh
+./test_ueval -q
+```
+
 It has no dependencies beyond the standard library and `ueval.h` itself, exits `0` on success / `1` on any failure, and is suitable as a CI gate.
 
-A separate, non-assertion benchmark (`bench_ueval.c`) measures hot-path call cost directly — see [Performance Notes](#performance-notes) for how to run it and how to read the results.
+A separate benchmark (`bench_ueval.c`) measures hot-path call cost directly, and also reports labeled `PASS`/`FAIL` correctness checks confirming the patterns being timed actually produce identical results (so the timing comparison itself is meaningful) — see [Performance Notes](#performance-notes) for how to run it and how to read the results.
 
 ---
 
@@ -436,14 +541,53 @@ Since `ueval_env` holds no global state and the library does no internal locking
 ### Verifying on your own hardware
 
 ```sh
+make bench
+```
+
+or directly:
+
+```sh
 gcc -O2 bench_ueval.c -o bench_ueval -lm
 ./bench_ueval
 ```
 
-This prints the same three scenarios above (bare-parse floor, a realistic small-variable-count case, and a worst-case near-full variable table) so you can get real numbers for your actual compiler, flags, and target hardware rather than relying on the figures here.
+This prints the same three scenarios above (bare-parse floor, a realistic small-variable-count case, and a worst-case near-full variable table), each clearly labeled with the expression and variable count being measured, so you can get real numbers for your actual compiler, flags, and target hardware rather than relying on the figures here. Alongside the timings, it also prints labeled `PASS`/`FAIL` checks confirming Pattern A and Pattern B computed identical results in each scenario — if those ever show `FAIL`, the timing comparison for that run isn't trustworthy and should be investigated before trusting the ns/call numbers.
 
 ---
 
 ## Memory & Thread Safety
 
 `ueval` uses no dynamic allocation. Every `ueval_env` is fully self-contained, so multiple environments can exist simultaneously in different threads without any locking. Do not share a single `ueval_env` between threads without external synchronisation.
+
+---
+
+## Versioning
+
+`ueval` follows [Semantic Versioning](https://semver.org) (`MAJOR.MINOR.PATCH`), with the current version available at compile time via macros defined at the top of `ueval.h`:
+
+```c
+#define UEVAL_VERSION_MAJOR 0
+#define UEVAL_VERSION_MINOR 1
+#define UEVAL_VERSION_PATCH 0
+#define UEVAL_VERSION "0.1.0"
+```
+
+`UEVAL_VERSION` is a string for logging/display; the three numeric macros are meant for preprocessor checks, e.g. `#if UEVAL_VERSION_MAJOR >= 1`.
+
+Since `ueval` is a single header consumed directly via `#include`, not a linked library, there's no separate runtime version query — the macros above are the only source of truth, and they're checked for self-consistency in the test suite ([Testing](#testing)).
+
+### What counts as MAJOR / MINOR / PATCH here
+
+For a parser/expression-evaluator library, "the public API" means more than function signatures — it also means *what a given expression evaluates to*. A change that makes `"5 <= 5"` return something different than it used to is just as breaking for a downstream user as renaming `ueval_eval`. With that in mind:
+
+- **MAJOR** — a previously-successful expression now evaluates to a different result, or now fails where it used to succeed (or vice versa), or an existing function's signature changes. Several items in [Known Quirks](#known-quirks) are candidates for a future MAJOR bump if they're ever tightened — e.g. making extra function arguments an error, or making trailing garbage after a valid expression an error. Either of those would correctly reject input that currently succeeds silently, which is a breaking change for anyone with that pattern baked into a saved expression/preset.
+- **MINOR** — new, additive capability with no change to existing behavior: new bound-function helpers, new error codes, new configuration macros, and so on. Old code keeps compiling and keeps behaving identically.
+- **PATCH** — bug fixes that make behavior match documented or clearly-intended semantics, with no signature changes. The `<=`/`>=` shift-collision fix (see [CHANGELOG.md](CHANGELOG.md)) is the model case: `<=` was always documented and intended to mean "less than or equal," so making it actually do that is a patch, not a behavior change anyone could legitimately be relying on.
+
+### Why this project is starting at 0.1.0, not 1.0.0
+
+Per semver, `0.x` versions explicitly mean "anything may still change." That's an accurate description of where `ueval` is right now — the [Known Quirks](#known-quirks) section documents several open behavioral questions (should extra function arguments be rejected? should trailing garbage be reported?) that may reasonably be resolved in ways that change behavior for existing expressions. Moving to `1.0.0` is meant to be a deliberate signal that the expression language's semantics are considered locked in, not a default version to start from.
+
+### Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full history of changes, organized by version, in [Keep a Changelog](https://keepachangelog.com) format.
