@@ -392,6 +392,10 @@ static double ueval__expr(ueval_env *env, int min_prec) {
         /* right-associative power */
         int next_min = (c == '*' && env->src[1] == '*') ? prec : prec + 1;
 
+        /* capture the operator's second character (if any) now, before the
+         * recursive call below advances env->src past the right operand */
+        char c2 = (len == 2) ? env->src[1] : '\0';
+
         env->src += len;
         double right = ueval__expr(env, next_min);
 
@@ -414,12 +418,14 @@ static double ueval__expr(ueval_env *env, int min_prec) {
                 else { left = (double)((long long)left % (long long)right); }
                 break;
             case '<':
-                if (len == 2) left = (double)((long long)left << (int)right);
-                else          left = (left < right);
+                if (len == 2 && c2 == '<') left = (double)((long long)left << (int)right); /* << */
+                else if (len == 2 && c2 == '=') left = (left <= right);                     /* <= */
+                else left = (left < right);
                 break;
             case '>':
-                if (len == 2) left = (double)((long long)left >> (int)right);
-                else          left = (left > right);
+                if (len == 2 && c2 == '>') left = (double)((long long)left >> (int)right); /* >> */
+                else if (len == 2 && c2 == '=') left = (left >= right);                     /* >= */
+                else left = (left > right);
                 break;
             case '=': left = (left == right); break;
             case '!': left = (left != right); break;
