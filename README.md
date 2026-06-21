@@ -383,6 +383,65 @@ gcc -Wall -Wextra test_ueval.c -o test_ueval -lm
 
 It has no dependencies beyond the standard library and `ueval.h` itself, exits `0` on success / `1` on any failure, and is suitable as a CI gate.
 
+A separate, non-assertion benchmark (`bench_ueval.c`) measures hot-path call cost directly — see [Performance Notes](#performance-notes) for how to run it and how to read the results.
+
+---
+
+## Performance Notes
+
+`ueval` was designed for exactly this shape of workload: a short expression, re-evaluated very frequently, against a handful of inputs that change on every call (a MIDI note/pitchbend/CC handler, a per-sample or per-block DSP control-rate update, a live-coding REPL, etc.). The numbers below are from `bench_ueval.c` (included alongside the test suite — see [Testing](#testing)), built with `gcc -O2` on the machine these docs were written on. Build flags, CPU, and compiler all shift the absolute numbers; what's stable across runs is the *shape* of the result.
+
+### Don't `ueval_bind` on the hot path — cache a pointer instead
+
+`ueval_bind` does a linear `strncmp` scan over every currently-bound variable before it finds (or creates) the slot to write to. That's the right cost to pay once at setup time, but it's wasted work if you pay it again on every call just to push in a new value.
+
+`ueval_ptr` exists for exactly this: look up the variable's storage location once, then read or write through that pointer directly — no scan, no string comparison, on the call itself.
+
+```c
+/* Setup, once: */
+ueval_bind(&env, "vel", 0.0);
+ueval_bind(&env, "cc7", 0.0);
+double *vel = ueval_ptr(&env, "vel");
+double *cc7 = ueval_ptr(&env, "cc7");
+
+/* Hot path, every call: */
+*vel = incoming_velocity;
+*cc7 = incoming_cc_value;
+ueval_result r = ueval_eval(&env, expr);
+```
+
+Measured difference, 2,000,000 calls per scenario, evaluating a short expression against the changing input(s):
+
+| Scenario                                   | `ueval_ptr` cache | `ueval_bind` by name | Slowdown |
+| :------------------------------------------ | -----------------: | ---------------------: | -------: |
+| 3 bound variables                          | ~258 ns/call      | ~265 ns/call          | ~1.02×   |
+| 32 bound variables, hot var in last slot   | ~163 ns/call      | ~247 ns/call          | ~1.52×   |
+
+With only a few variables bound (the common case for a single control-rate expression), the difference is small — the linear scan over 3 entries is nearly free. It grows as the variable table fills up, since `ueval_bind`'s scan cost is `O(var_count)` per call while `ueval_ptr`'s write is `O(1)`. **Cache the pointer regardless** — it costs nothing extra to set up and removes the scan entirely, so there's no real reason to take the `ueval_bind` cost on a repeated call even when it's currently small.
+
+### The parse itself is the real floor cost
+
+Even with pointer caching, most of the per-call time is the precedence-climbing parse walking the expression string from scratch — `ueval` has no AST or bytecode to cache, by design (header-only, no dynamic allocation). In the same benchmark, parsing a trivial literal expression (`"1 + 1"`, no variables at all) costs roughly **85 ns/call**, which is most of the ~163 ns/call floor seen above for a short expression with one variable reference.
+
+Practical implications:
+
+- **Keep hot-path expressions short.** A few terms and one or two function calls costs barely more than a literal; a long expression with many operators and variable references costs proportionally more, since the whole string is re-walked every call.
+- **There's no per-call allocation to worry about.** No `malloc`/`free` happens anywhere in `ueval_eval`, so there's nothing to free or leak, and behavior is consistent call to call — useful for a callback you don't want introducing GC-style pauses or fragmentation over a long-running session.
+- **At MIDI rates, none of this is likely to matter.** Even the busiest realistic MIDI control stream (dense pitchbend/CC at full resolution) is several orders of magnitude slower than a few hundred nanoseconds per message. The advice above is about not leaving easy headroom on the table, not about hitting a wall — if you're calling `ueval_eval` once per audio sample instead of once per control-rate update, the calculus changes and you'd want to measure for your specific expression and call rate.
+
+### One `ueval_env` per independently-updated signal
+
+Since `ueval_env` holds no global state and the library does no internal locking (see [Memory & Thread Safety](#memory--thread-safety)), the cheapest way to handle multiple independent inputs — separate MIDI channels, separate synth voices, note vs. pitchbend vs. CC — is usually a separate `ueval_env` (and its own cached `ueval_ptr` handles) per signal, rather than sharing one env across threads with external locking. Set each one up once, then in steady state only ever touch it through cached pointers and `ueval_eval`.
+
+### Verifying on your own hardware
+
+```sh
+gcc -O2 bench_ueval.c -o bench_ueval -lm
+./bench_ueval
+```
+
+This prints the same three scenarios above (bare-parse floor, a realistic small-variable-count case, and a worst-case near-full variable table) so you can get real numbers for your actual compiler, flags, and target hardware rather than relying on the figures here.
+
 ---
 
 ## Memory & Thread Safety
